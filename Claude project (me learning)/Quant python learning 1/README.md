@@ -1,23 +1,61 @@
 # Goofy Screener — Multi-Market Quant Strategy System
 
 A quantitative trading research project built from scratch in Python.  
-Five strategies individually backtested, then combined into an automated screener that runs across **117 assets across US, ASX, and JPX markets** — picking the best strategy per asset and ranking by risk-adjusted performance.
+Five strategies individually backtested, then combined into a 9-phase systematic pipeline that screens **117 assets across US, ASX, and JPX markets** — complete with regime detection, Kelly-based sizing, correlation-aware portfolio construction, an XGBoost ML signal layer, paper trading, and walk-forward validation.
 
 > **Core finding:** Strategy-asset fit matters more than the strategy itself. The same strategy that produces a Sharpe of 0.87 on one stock produces -0.21 on another. The screener exists to find which combination actually works — and proves it on data the model never saw.
+
+---
+
+## Build Phases
+
+| Phase | What it adds | Key file |
+|-------|-------------|----------|
+| 1–2 | Individual strategy backtests (MA, RSI, BB, MACD, Mean Rev) | `Goofy MA/RSI/BB/MACD/Mean Reversion for 6 assets.ipynb` |
+| 3 | Multi-market screener — 117 assets, 3 markets, Excel output | `goofy_screener_phase3.py` |
+| 4a | Regime detection — VIX + SMA regime gate | `regime_detector.py` |
+| 4b | Empirical gate search — finds which regime thresholds actually improve results | `Goofy Phase 4b — Empirical Gate Search.ipynb` |
+| 5 | Position sizing — Half-Kelly + 15% vol target | `position_sizer.py` |
+| 6 | Portfolio construction — correlation clusters (ρ ≥ 0.65), 1/√N size adjustment | `portfolio_builder.py` |
+| 7 | ML signal layer — XGBoost 20-day directional classifier, 55% pass threshold | `ml_signal.py` |
+| 8 | Paper trading — persistent JSON trade log, mark-to-market, -5% stop-loss | `paper_trader.py` |
+| 9 | Walk-forward validation — rolling 5yr train / 1yr test across 10 assets | `Goofy Phase 9 — Walk-Forward Validation.ipynb` |
+
+**Current status:** 16 paper trades open as of May 2026, closing mid-June 2026.
 
 ---
 
 ## Project Structure
 
 ```
-├── Goofy MA for 6 assets.ipynb             — Strategy 1: MA Crossover
-├── Goofy8 RSI for 6 assets.ipynb           — Strategy 2: RSI
-├── Goofy BB for 6 assets.ipynb             — Strategy 3: Bollinger Bands
-├── Goofy MACD for 6 assets.ipynb           — Strategy 4: MACD
-├── Goofy Mean Reversion for 6 assets.ipynb — Strategy 5: Mean Reversion
-├── goofy_screener_daily.py                 — Automated daily screener (Phase 3)
-├── screener_output/                        — Excel reports (auto-generated)
-└── README.md
+── Strategy notebooks ──────────────────────────────────────────────────────
+├── Goofy MA for 6 assets.ipynb             Strategy 1: MA Crossover
+├── Goofy8 RSI for 6 assets.ipynb           Strategy 2: RSI
+├── Goofy BB for 6 assets.ipynb             Strategy 3: Bollinger Bands
+├── Goofy MACD for 6 assets.ipynb           Strategy 4: MACD
+├── Goofy Mean Reversion for 6 assets.ipynb Strategy 5: Mean Reversion
+
+── Phase notebooks ─────────────────────────────────────────────────────────
+├── Goofy Screener Phase 3 — US ASX JPX.ipynb
+├── Goofy Phase 4 — Regime Detection.ipynb
+├── Goofy Phase 4b — Empirical Gate Search.ipynb
+├── Goofy Phase 5 — Position Sizing.ipynb
+├── Goofy Phase 6 — Portfolio Construction.ipynb
+├── Goofy Phase 7 — ML Signal.ipynb
+├── Goofy Phase 8 — Paper Trading.ipynb
+├── Goofy Phase 9 — Walk-Forward Validation.ipynb  ← Phase 9 (new)
+
+── Core modules ────────────────────────────────────────────────────────────
+├── goofy_screener_phase8.py   Main weekly run script (run this)
+├── ml_signal.py               XGBoost feature engineering + model
+├── portfolio_builder.py       Correlation matrix + cluster sizing
+├── position_sizer.py          Kelly Criterion + volatility scaling
+├── regime_detector.py         Regime gate (VIX + SMA)
+├── paper_trader.py            Persistent paper trade log + stop-loss
+
+── Live data ───────────────────────────────────────────────────────────────
+├── paper_trades/
+│   └── trades_log.json        Live paper trade log (16 open positions)
 ```
 
 ---
@@ -36,7 +74,7 @@ All strategies share the same validation framework:
 | **Max drawdown** | Peak-to-trough on cumulative equity curve |
 | **Benchmark** | Buy & Hold (passive holding of the same asset) |
 
-Parameters are chosen on historical data only, then frozen and applied to future data the model never saw. This is the core of the methodology — what separates genuine signal from overfitting.
+Parameters are chosen on historical data only, then frozen and applied to future data the model never saw.
 
 ---
 
@@ -69,66 +107,21 @@ Goes long when price drops N standard deviations below its rolling mean; exits a
 
 ---
 
-## Phase 3 Screener — 117 Assets, 3 Markets
+## Phase 9 Walk-Forward Findings
 
-**File:** `goofy_screener_daily.py`
+Walk-forward validation tests whether the XGBoost edge is consistent across time, not just lucky in the 2021–2026 OOS window. 100 rolling windows (5yr train / 1yr test) across 10 representative assets.
 
-The screener automates all 5 strategies into a single pipeline across three global markets:
+| Metric | ML PASS signals | Baseline (no gate) | ML lift |
+|---|---|---|---|
+| Avg val AUC | 0.533 | 0.500 (random) | +0.033 |
+| Win rate | 62.3% | 61.1% | **+1.2%** |
+| Avg 20-day return | +1.81% | +1.63% | **+0.18%** |
+| Windows where WR > 50% | **80%** | — | — |
 
-1. Downloads live price data via Yahoo Finance
-2. Splits into train (2016–2020) and test (2021–present)
-3. Grid searches all strategies and parameters on training data only
-4. Selects the best strategy per asset by in-sample Sharpe
-5. Applies that strategy to out-of-sample data — data the model never touched
-6. Scores each asset by a weighted formula: Sharpe, return, drawdown protection
-7. Assigns tiers and exports a colour-coded Excel report
+**Verdict: Weak but consistent edge.** The ML gate adds a small but real improvement in 80% of time windows. The model breaks in sharp bear regimes (2022 rate shock) — the -5% stop-loss in Phase 8 directly addresses this.
 
-### Asset Universe
-
-| Market | Count | Examples |
-|--------|-------|---------|
-| 🇺🇸 US | ~40 | NVDA, TSLA, AAPL, JPM, XOM, GLD, SPY |
-| 🇦🇺 ASX | ~37 | CBA.AX, BHP.AX, CSL.AX, WTC.AX, STW.AX |
-| 🇯🇵 JPX | ~40 | 7203.T, 6758.T, 8306.T, 9984.T, 8725.T |
-
-### Tier System
-
-| Tier | Criteria |
-|------|---------|
-| ⭐ S — Excellent | Sharpe ≥ 0.8, Return ≥ 30%, Max DD ≥ -20% |
-| ✅ A — Good | Sharpe ≥ 0.4, Return ≥ 10%, Max DD ≥ -35% |
-| 🔵 B — Decent | Sharpe ≥ 0.1, Max DD ≥ -50% |
-| ⬜ Skip | Below all thresholds |
-
-### Latest Results (Run: 2026-04-12)
-
-**117 assets screened | 12 S-tier | 30 A-tier | 22 assets beat Buy & Hold**
-
-**Top 5 by Out-of-Sample Sharpe:**
-
-| Rank | Market | Asset | Strategy | OUT Sharpe | Tier |
-|------|--------|-------|---------|-----------|------|
-| 1 | JPX | 8725.T | RSI | 1.306 | ⭐ S |
-| 2 | JPX | 8002.T | MA Crossover | 1.276 | 🔵 B |
-| 3 | JPX | 9434.T | Bollinger Bands | 1.151 | ✅ A |
-| 4 | US | COP | RSI | 1.121 | ✅ A |
-| 5 | JPX | 7011.T | MACD | 1.104 | ✅ A |
-
-**Strategy distribution across 117 assets:**
-
-| Strategy | Count |
-|----------|-------|
-| MA Crossover | 34 |
-| MACD | 27 |
-| RSI | 24 |
-| Bollinger Bands | 22 |
-| Mean Reversion | 10 |
-
-### Why only 22/117 beat Buy & Hold — and why that's honest
-
-2021–2026 was a strong bull market. In sustained uptrends, passive holding wins on raw return because rule-based strategies move to cash during corrections and miss part of the recovery. This is not a failure — it is an accurate reflection of what quant strategies do in trending markets.
-
-The real value is **drawdown protection**. Top assets show strategy drawdowns of -10% to -25% while the same assets held passively experienced -30% to -75% drops over the same period. For risk-conscious investors, a strategy that earns less but caps the worst drop at -15% is genuinely useful.
+**Strongest assets (ML adds most value):** XOM (AUC 0.576), MSFT (0.561), JPM (0.551), 7203.T (0.554)  
+**Weakest (ML adds least):** CBA.AX (AUC 0.493), WBC.AX (0.495) — ASX bank stocks follow macro drivers more than technical patterns
 
 ---
 
@@ -141,13 +134,23 @@ Sony beat Buy & Hold with Bollinger Bands (Sharpe 0.87) but failed with MACD (Sh
 Sony's Mean Reversion in-sample Sharpe was 1.34 — the highest single result in the whole project. Out-of-sample it fell to 0.41. Without the train/test split that looks like the best strategy in the study. It isn't.
 
 **3. Regime determines performance.**  
-Mean Reversion underperformed across the board because 2021–2026 was trending. The same strategies in a sideways market would tell a completely different story.
+Mean Reversion underperformed across the board because 2021–2026 was trending. The Phase 4 regime gate reduces damage in wrong-regime periods.
 
 **4. Japanese markets showed the strongest signals.**  
 JPX financials (8725.T, 8411.T, 8750.T, 8306.T) dominated the top Sharpe rankings. Japanese bank stocks have cleaner oscillation patterns that suit RSI and MACD well.
 
-**5. Sharpe matters more than raw return.**  
-CBA's RSI strategy returned +52.7% with Sharpe 0.99 and max drawdown -11%. Buy & Hold returned +167% but with -35% drawdown. Which is better depends entirely on risk tolerance.
+**5. Walk-forward shows the ML edge is real but fragile.**  
+AUC averaged 0.533 across 100 windows — consistently above random. But the lift over baseline is only +1.2% win rate. Most of the 62% win rate is beta (bull market). The true alpha is small and regime-sensitive.
+
+---
+
+## Asset Universe
+
+| Market | Count | Examples |
+|--------|-------|---------|
+| 🇺🇸 US | ~40 | NVDA, TSLA, AAPL, JPM, XOM, GLD, SPY |
+| 🇦🇺 ASX | ~37 | CBA.AX, BHP.AX, CSL.AX, WTC.AX, STW.AX |
+| 🇯🇵 JPX | ~40 | 7203.T, 6758.T, 8306.T, 9984.T, 8725.T |
 
 ---
 
@@ -155,18 +158,23 @@ CBA's RSI strategy returned +52.7% with Sharpe 0.99 and max drawdown -11%. Buy &
 
 ### Requirements
 ```bash
-pip install yfinance pandas numpy openpyxl
+pip install yfinance pandas numpy openpyxl xgboost scikit-learn
 ```
 
-### Run the screener
+### Run the full Phase 8 screener (weekly)
 ```bash
-python goofy_screener_daily.py
+python3 goofy_screener_phase8.py --market ALL
 ```
 
-Output saved to `screener_output/Goofy_Phase3_YYYY-MM-DD.xlsx`
+Outputs a colour-coded multi-tab Excel report to `screener_output/`.  
+Updates the paper trade log at `paper_trades/trades_log.json`.
+
+### Run walk-forward validation (Phase 9)
+Open `Goofy Phase 9 — Walk-Forward Validation.ipynb` and run all cells.  
+Takes ~5–10 minutes. Saves charts to `screener_output/`.
 
 ### Individual strategy notebooks
-Open any `.ipynb` file in Jupyter. Each notebook is self-contained with its own data download, backtest, and charts.
+Open any `.ipynb` file in Jupyter. Each notebook is self-contained.
 
 ---
 
@@ -176,7 +184,8 @@ Open any `.ipynb` file in Jupyter. Each notebook is self-contained with its own 
 - **Sharpe without risk-free rate.** Subtracting cash rates (~4–5%) would reduce headline Sharpe by roughly 0.3–0.5.
 - **Multiple comparisons.** Selecting the best of 5 strategies introduces selection bias even with a proper train/test split.
 - **Long-only.** All strategies are long or flat. No short selling.
-- **No portfolio construction.** No correlation analysis or position sizing across assets.
+- **ML edge is small (+1.2% win rate lift).** Most of the 62% win rate is market beta. The model adds real but modest value.
+- **Regime sensitivity.** The system underperforms in sharp bear markets (2022). The -5% stop-loss partially mitigates this.
 
 ---
 
@@ -186,11 +195,9 @@ This project is for educational and research purposes only. All backtested resul
 
 ---
 
-## Sample Output
-
 ![Phase 4 Excel Output](phase4_sample_output.png)
 
-Each weekly run produces a colour-coded multi-tab Excel report ranking ~120 stocks across US/ASX/JPX with regime context.
+*Each weekly run produces a colour-coded multi-tab Excel report ranking ~120 stocks across US/ASX/JPX with regime context, ML signals, and paper trade P&L.*
 
 *Built by Hiroki Kunu — International Finance, University of Queensland*  
 *GitHub: [GoofyisDAWG](https://github.com/GoofyisDAWG) | LinkedIn: [Hiroki Kunu](https://www.linkedin.com/in/hiroki-kunu-ba4218401)*

@@ -5,3 +5,9 @@ __pycache__/
 anaconda_projects/
 screener_output/
 *.xlsx
+*.Rproj
+main
+strategy_projection.html
+rsi_volatile_test.py
+project_summary.md
+Linkedin posts for quant/

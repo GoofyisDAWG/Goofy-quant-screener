@@ -20,7 +20,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-HOLD_DAYS   = 20
+HOLD_DAYS       = 20
+STOP_LOSS_PCT   = 5.0   # -5.0% triggers early exit; set to None to disable
 TRADES_DIR  = Path(__file__).parent / "paper_trades"
 TRADES_FILE = TRADES_DIR / "trades_log.json"
 
@@ -142,7 +143,13 @@ def mark_to_market(price_data: dict, run_date: str = None) -> tuple:
         if current_price is not None:
             pnl_pct = round((current_price / trade["entry_price"] - 1) * 100, 3)
 
-        if days_held >= HOLD_DAYS:
+        stopped = (
+            STOP_LOSS_PCT is not None
+            and pnl_pct is not None
+            and pnl_pct <= -STOP_LOSS_PCT
+        )
+
+        if days_held >= HOLD_DAYS or stopped:
             closed_trade = {
                 **{k: v for k, v in trade.items()
                    if k not in ("current_price", "unrealised_pnl_pct", "days_held")},
@@ -151,6 +158,7 @@ def mark_to_market(price_data: dict, run_date: str = None) -> tuple:
                 "days_held":   days_held,
                 "pnl_pct":     pnl_pct,
                 "win":         bool(pnl_pct > 0) if pnl_pct is not None else None,
+                "exit_reason": "STOP_LOSS" if stopped else "HOLD_COMPLETE",
             }
             log["closed"].append(closed_trade)
             newly_closed.append(closed_trade)
@@ -193,6 +201,7 @@ def get_performance() -> dict:
     avg_ret   = float(df["pnl_pct"].mean())
     med_ret   = float(df["pnl_pct"].median())
     std_ret   = float(df["pnl_pct"].std()) if n > 1 else 0.0
+    n_stopped = int((df["exit_reason"] == "STOP_LOSS").sum()) if "exit_reason" in df.columns else 0
 
     periods_per_year = 252 / HOLD_DAYS
     sharpe = float((avg_ret / std_ret) * np.sqrt(periods_per_year)) if std_ret > 0 else None
@@ -220,6 +229,7 @@ def get_performance() -> dict:
 
     return {
         "n_closed":          n,
+        "n_stopped":         n_stopped,
         "n_open":            len(open_),
         "win_rate":          round(win_rate, 3),
         "avg_pnl_pct":       round(avg_ret, 2),

@@ -338,7 +338,8 @@ def main():
         print(f"  ✅ Closed {len(newly_closed)} position(s) after {HOLD_DAYS} days:")
         for t in newly_closed:
             sign = "+" if (t.get("pnl_pct") or 0) >= 0 else ""
-            print(f"     {t['asset']:14} → {sign}{t.get('pnl_pct', '?'):.2f}%")
+            tag  = " [STOP]" if t.get("exit_reason") == "STOP_LOSS" else ""
+            print(f"     {t['asset']:14} → {sign}{t.get('pnl_pct', '?'):.2f}%{tag}")
     else:
         print(f"  — No positions expired today.")
 
@@ -363,7 +364,8 @@ def main():
     print(f"  PHASE 8 PAPER TRADING STATUS  |  {today}")
     print(f"{'═'*72}")
     print(f"  📋 Open positions : {perf.get('n_open', 0)}")
-    print(f"  📈 Closed trades  : {perf.get('n_closed', 0)}")
+    print(f"  📈 Closed trades  : {perf.get('n_closed', 0)}"
+          + (f"  ({perf['n_stopped']} stopped early)" if perf.get('n_stopped') else ""))
     if perf.get("n_closed", 0) > 0:
         print(f"  Win rate          : {perf['win_rate']:.1%}")
         print(f"  Avg P&L per trade : {perf['avg_pnl_pct']:+.2f}%")
